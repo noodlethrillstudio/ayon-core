@@ -68,7 +68,7 @@ VIDEO_EXTENSIONS = {
     ".f4p", ".f4v", ".flv", ".gif", ".gifv", ".m2v", ".m4p", ".m4v",
     ".mkv", ".mng", ".mov", ".mp2", ".mp4", ".mpe", ".mpeg", ".mpg",
     ".mpv", ".mxf", ".nsv", ".ogg", ".ogv", ".qt", ".rm", ".rmvb",
-    ".roq", ".svi", ".vob", ".webm", ".wmv", ".yuv"
+    ".roq", ".svi", ".swf", ".vob", ".webm", ".wmv", ".yuv"
 }
 
 
