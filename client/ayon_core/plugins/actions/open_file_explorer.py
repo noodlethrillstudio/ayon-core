@@ -91,7 +91,7 @@ class OpenTaskPath(LauncherAction):
             valid_workdir = os.path.normpath(valid_workdir)
             if os.path.exists(valid_workdir):
                 return valid_workdir
-        raise AssertionError("Folder does not exist yet.")
+        raise AssertionError("Folder does not exist yet.:", valid_workdir)
 
     @staticmethod
     def open_in_explorer(path):
