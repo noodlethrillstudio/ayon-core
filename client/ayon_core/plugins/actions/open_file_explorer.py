@@ -66,7 +66,7 @@ class OpenTaskPath(LauncherAction):
             project_entity=selection.project_entity
         )
         workdir = anatomy.get_template_item(
-            "work", "default", "folder"
+            "work", "shots", "folder"
         ).format(data)
 
         # Remove any potential un-formatted parts of the path
@@ -83,7 +83,7 @@ class OpenTaskPath(LauncherAction):
 
         data.pop("task", None)
         workdir = anatomy.get_template_item(
-            "work", "default", "folder"
+            "work", "shots", "folder"
         ).format(data)
         valid_workdir = self._find_first_filled_path(workdir)
         if valid_workdir:
@@ -91,13 +91,15 @@ class OpenTaskPath(LauncherAction):
             valid_workdir = os.path.normpath(valid_workdir)
             if os.path.exists(valid_workdir):
                 return valid_workdir
-        raise AssertionError("Folder does not exist yet.:", valid_workdir)
+        raise AssertionError("Folder does not exist yet.:", valid_workdir, workdir, anatomy.get_template_item(
+            "work", "shots", "folder"))
 
     @staticmethod
     def open_in_explorer(path):
         platform_name = platform.system().lower()
         if platform_name == "windows":
-            args = ["start", path]
+            os.startfile(path)
+            return
         elif platform_name == "darwin":
             args = ["open", "-R", path]
         elif platform_name == "linux":
@@ -105,6 +107,7 @@ class OpenTaskPath(LauncherAction):
         else:
             raise RuntimeError(f"Unknown platform {platform.system()}")
         # Make sure path is converted correctly for 'os.system'
+        print(f"Opening in explorer: {path}")
         os.system(subprocess.list2cmdline(args))
 
     @staticmethod
