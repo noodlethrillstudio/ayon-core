@@ -4,7 +4,9 @@ from ayon_core.settings import get_project_settings
 from ayon_applications import PreLaunchHook, LaunchTypes
 from ayon_core.pipeline.workfile import (
     get_custom_workfile_template,
-    get_custom_workfile_template_by_string_context
+    get_custom_workfile_template_by_string_context,
+    save_workfile_info,
+    find_workfile_rootless_path
 )
 
 
@@ -111,4 +113,62 @@ class CopyTemplateWorkfile(PreLaunchHook):
         shutil.copy2(
             os.path.normpath(template_path),
             os.path.normpath(last_workfile)
+        )
+        if not os.path.exists(os.path.normpath(last_workfile)):
+            self.log.warning(
+                "Couldn't copy template workfile to \"{}\"".format(
+                    last_workfile
+                )
+            )
+            return
+        self._save_new_workfile(
+            last_workfile,
+            project_name,
+            host_name,
+            folder_entity,
+            task_entity,
+            project_entity,
+            project_settings,
+            anatomy
+        )
+        
+    def _save_new_workfile(self, last_workfile, project_name, host_name, folder_entity, task_entity, project_entity, project_settings, anatomy):
+        host_settings = project_settings.get(host_name)
+        if not host_settings:
+            self.log.info((
+                "No settings for host \"{}\". Can't access custom templates"
+                " in it."
+            ).format(host_name))
+            return
+        workfile_builder_settings = host_settings.get("workfile_builder")
+        if not workfile_builder_settings:
+            self.log.info((
+                "Seems like old version of settings is used."
+                " Can't access custom templates in host \"{}\"."
+            ).format(host_name))
+            return
+
+        if not workfile_builder_settings.get("save_new_workfile", False):
+            self.log.info((
+                "Saving new workfile after copying template is disabled in"
+                " settings. New workfile won't be saved to Ayon."
+            ))
+            return
+        
+        rootless_path = find_workfile_rootless_path(
+            workfile_path=last_workfile,
+            project_name=project_name,
+            folder_entity=folder_entity,
+            task_entity=task_entity,
+            host_name=host_name,
+            project_entity=project_entity,
+            project_settings=project_settings,
+            anatomy=anatomy,
+        )
+
+        save_workfile_info(
+            project_name=project_name,
+            task_id=task_entity["id"],
+            rootless_path=rootless_path,
+            host_name=host_name
         )

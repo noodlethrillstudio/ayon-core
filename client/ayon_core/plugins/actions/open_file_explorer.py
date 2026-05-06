@@ -8,6 +8,8 @@ from ayon_core.pipeline import (
     LauncherAction,
 )
 from ayon_core.pipeline.template_data import get_template_data
+from ayon_core.pipeline.workfile.path_resolving import get_workfile_template_key
+
 
 
 class OpenTaskPath(LauncherAction):
@@ -58,15 +60,21 @@ class OpenTaskPath(LauncherAction):
         data = get_template_data(
             selection.project_entity,
             selection.folder_entity,
-            selection.task_entity
+            selection.task_entity,
+            "launcher",
         )
-
         anatomy = Anatomy(
             selection.project_name,
             project_entity=selection.project_entity
         )
+        key = get_workfile_template_key(
+            selection.project_entity["name"],
+            selection.task_entity["taskType"],
+            "launcher",
+        ) 
+        
         workdir = anatomy.get_template_item(
-            "work", "shots", "folder"
+            "work", key, "directory"
         ).format(data)
 
         # Remove any potential un-formatted parts of the path
@@ -83,7 +91,7 @@ class OpenTaskPath(LauncherAction):
 
         data.pop("task", None)
         workdir = anatomy.get_template_item(
-            "work", "shots", "folder"
+            "work", key, "directory"
         ).format(data)
         valid_workdir = self._find_first_filled_path(workdir)
         if valid_workdir:
@@ -91,8 +99,12 @@ class OpenTaskPath(LauncherAction):
             valid_workdir = os.path.normpath(valid_workdir)
             if os.path.exists(valid_workdir):
                 return valid_workdir
-        raise AssertionError("Folder does not exist yet.:", valid_workdir, workdir, anatomy.get_template_item(
-            "work", "shots", "folder"))
+        raise AssertionError(
+            "Folder does not exist yet.",
+            valid_workdir,
+            workdir,
+            anatomy.get_template_item("work", key, "directory"),
+        )
 
     @staticmethod
     def open_in_explorer(path):
