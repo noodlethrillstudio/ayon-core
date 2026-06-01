@@ -56,6 +56,7 @@ class ExtractBurnin(publish.Extractor):
         "blender",
         "unreal",
         "batchdelivery",
+        "animate"
     ]
     settings_category = "core"
 
