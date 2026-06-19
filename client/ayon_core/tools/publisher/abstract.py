@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, asdict
 from typing import (
@@ -194,6 +196,10 @@ class AbstractPublisherBackend(AbstractPublisherCommon):
         pass
 
     @abstractmethod
+    def get_project_settings(self, project_name: str | None) -> dict:
+        pass
+
+    @abstractmethod
     def get_project_entity(
         self, project_name: str
     ) -> Union[Dict[str, Any], None]:
@@ -219,6 +225,15 @@ class AbstractPublisherBackend(AbstractPublisherCommon):
 
 
 class AbstractPublisherFrontend(AbstractPublisherCommon):
+    @abstractmethod
+    def get_window_subtitle(self) -> Optional[str]:
+        """Get window subtitle.
+
+        Returns:
+            Optional[str]: Window subtitle.
+
+        """
+
     @abstractmethod
     def register_event_callback(self, topic: str, callback: Callable):
         pass

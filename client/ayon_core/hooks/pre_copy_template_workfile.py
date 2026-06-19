@@ -1,13 +1,19 @@
 import os
 import shutil
+
 from ayon_core.settings import get_project_settings
-from ayon_applications import PreLaunchHook, LaunchTypes
+
+from ayon_core.pipeline.template_data import get_template_data
 from ayon_core.pipeline.workfile import (
     get_custom_workfile_template,
     get_custom_workfile_template_by_string_context,
     save_workfile_info,
-    find_workfile_rootless_path
+    find_workfile_rootless_path,
+    get_last_workfile_with_version_from_paths,
+    get_workfile_template_key,
 )
+
+from ayon_applications import PreLaunchHook, LaunchTypes
 
 
 class CopyTemplateWorkfile(PreLaunchHook):
@@ -108,6 +114,11 @@ class CopyTemplateWorkfile(PreLaunchHook):
         self.log.info(
             f"Creating workfile from template: \"{template_path}\""
         )
+
+        # Keep extension of template file
+        _, ext = os.path.splitext(template_path)
+        last_workfile_extless, _ = os.path.splitext(last_workfile)
+        last_workfile = f"{last_workfile_extless}{ext}"
 
         # Copy template workfile to new destination
         shutil.copy2(

@@ -8,9 +8,10 @@ from ayon_core.pipeline import (
     publish,
     get_temp_dir
 )
-from ayon_core.lib import (
-    is_oiio_supported,
-)
+from ayon_core.pipeline.publish.lib import get_default_reviewable_layers
+from ayon_core.pipeline.colorspace import get_representation_ocio_config_path
+from ayon_core.lib import is_oiio_supported
+
 from ayon_core.lib.transcoding import (
     MissingRGBAChannelsError,
     oiio_color_convert,
@@ -69,6 +70,10 @@ class ExtractOIIOTranscode(publish.Extractor):
     options = None
 
     def process(self, instance):
+        if instance.data.get("farm"):
+            self.log.debug("Should be processed on farm, skipping.")
+            return
+
         if not self.profiles:
             self.log.debug("No profiles present for color transcode")
             return
@@ -99,7 +104,8 @@ class ExtractOIIOTranscode(publish.Extractor):
             # Backward compatibility
             instance.data.get("colorspaceView")
         )
-
+        project_settings = instance.context.data["project_settings"]
+        review_layers = get_default_reviewable_layers(project_settings)
         for idx, repre in enumerate(list(repres)):
             self.log.debug("repre ({}): `{}`".format(idx + 1, repre["name"]))
             if not self._repre_is_valid(repre, profile):
@@ -109,13 +115,22 @@ class ExtractOIIOTranscode(publish.Extractor):
             added_review = False
 
             colorspace_data = repre["colorspaceData"]
+
+            config_path = get_representation_ocio_config_path(
+                repre,
+                anatomy=instance.context.data["anatomy"],
+                logger=self.log
+            )
+            if not config_path:
+                self.log.debug(
+                    "Skipping OIIO Color Transcode because no OCIO config"
+                    " path found on representation."
+                )
+                continue
+
             source_colorspace = colorspace_data["colorspace"]
             source_display = colorspace_data.get("display")
             source_view = colorspace_data.get("view")
-            config_path = colorspace_data.get("config", {}).get("path")
-            if not config_path or not os.path.exists(config_path):
-                self.log.warning("Config file doesn't exist, skipping")
-                continue
 
             # Get representation files to convert
             if isinstance(repre["files"], list):
@@ -218,7 +233,8 @@ class ExtractOIIOTranscode(publish.Extractor):
                             frames=frames,
                             frame_padding=frame_padding,
                             parallel_frames=parallel_frames,
-                            logger=self.log
+                            review_layers=review_layers,
+                            logger=self.log,
                         )
                     except MissingRGBAChannelsError as exc:
                         missing_rgba_review_channels = True

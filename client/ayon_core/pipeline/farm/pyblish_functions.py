@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import copy
 import os
+from pathlib import Path
+import platform
 import re
-import warnings
-from copy import deepcopy
+import typing
 from typing import Any, Union, Optional
+import warnings
 
 import attr
 import ayon_api
 import clique
+
 from ayon_core.lib import Logger
+from ayon_core.lib.file_transaction import copyfile
 from ayon_core.settings import get_project_settings
 from ayon_core.pipeline import (
     get_current_project_name,
@@ -19,6 +23,10 @@ from ayon_core.pipeline import (
 from ayon_core.pipeline.create import get_product_name
 from ayon_core.pipeline.farm.patterning import match_aov_pattern
 from ayon_core.pipeline.publish import KnownPublishError
+from ayon_core.pipeline.publish.input_versions import serialize_input_versions
+
+if typing.TYPE_CHECKING:
+    from ayon_core.pipeline import Anatomy
 
 log = Logger.get_logger(__name__)
 
@@ -53,11 +61,47 @@ def remap_source(path, anatomy):
         anatomy.find_root_template_from_path(path)
     )
     if success:
-        source = rootless_path
-    else:
-        raise ValueError(
-            "Root from template path cannot be found: {}".format(path))
-    return source
+        return rootless_path
+    raise ValueError(
+        f"Root from template path cannot be found: {path}"
+    )
+
+
+def find_colorspace_template(
+    colorspace_path: str,
+    anatomy: Anatomy,
+) -> str | None:
+    """Find template for colorspace path.
+
+    Try to use builtin OCIO if path is relative to it. If not, try to
+        remap path using anatomy. If that fails, return None.
+
+    Args:
+        colorspace_path (str): Path to colorspace.
+        anatomy (Anatomy): Project anatomy object.
+
+    Returns:
+        str | None: Template to use for colorspace path.
+
+    """
+    builtin_path = os.getenv("BUILTIN_OCIO_ROOT")
+    if builtin_path:
+        builtin_path = Path(builtin_path).resolve().absolute()
+        path = Path(colorspace_path).resolve().absolute()
+        if path.is_relative_to(builtin_path):
+            relative = str(path.relative_to(builtin_path))
+            if platform.system().lower() == "windows":
+                relative = relative.replace("\\", "/")
+            return f"{{BUILTIN_OCIO_ROOT}}/{relative}"
+
+    output = None
+    try:
+        output = remap_source(colorspace_path, anatomy)
+        if platform.system().lower() == "windows":
+            output = output.replace("\\", "/")
+    except ValueError:
+        pass
+    return output
 
 
 def extend_frames(folder_path, product_name, start, end):
@@ -193,6 +237,11 @@ def create_skeleton_instance(
 
     """
     # list of family names to transfer to new family if present
+    if families_transfer is None:
+        families_transfer = []
+
+    if instance_transfer is None:
+        instance_transfer = {}
 
     context = instance.context
     data = instance.data.copy()
@@ -220,14 +269,30 @@ def create_skeleton_instance(
         log.warning(("Could not find root path for remapping \"{}\". "
                      "This may cause issues.").format(source))
 
-    # QUESTION why is 'render' product base type enforced here?
+    # This is a hack to keep the value of 'productType'.
+    # Because this function does not use product base type from source
+    #   instance and we don't know if product type of the instance was
+    #   customized or not, only way how to guess custom product type is
+    #   to check if is same as product base type.
+    i_product_base_type = instance.data.get("productBaseType")
+    i_product_type = instance.data.get("productType")
+    product_type = None
+    if (
+        i_product_base_type
+        and i_product_base_type != i_product_type
+    ):
+        product_type = i_product_type
+
+    # This is the old way of defining product base type
+    # - hard-coded product base type
     product_base_type = "render"
     if "prerender.farm" in instance.data["families"]:
         product_base_type = "prerender"
 
+    if not product_type:
+        product_type = product_base_type
+
     families = [product_base_type]
-    # TODO find out how to get 'product_type'
-    product_type = product_base_type
 
     # pass review to families if marked as review
     if data.get("review"):
@@ -260,8 +325,7 @@ def create_skeleton_instance(
         "multipartExr": data.get("multipartExr", False),
         "jobBatchName": data.get("jobBatchName", ""),
         "useSequenceForReview": data.get("useSequenceForReview", True),
-        # map inputVersions `ObjectId` -> `str` so json supports it
-        "inputVersions": list(map(str, data.get("inputVersions", []))),
+        "inputVersions": serialize_input_versions(data.get("inputVersions")),
         "colorspace": data.get("colorspace"),
         "hasExplicitFrames": data.get("hasExplicitFrames", False),
         "reuseLastVersion": data.get("reuseLastVersion", False),
@@ -641,12 +705,8 @@ def create_instances_for_aov(
 
         # Get templated path from absolute config path.
         anatomy = instance.context.data["anatomy"]
-        try:
-            additional_data["colorspaceTemplate"] = remap_source(
-                colorspace_config, anatomy)
-        except ValueError as e:
-            log.warning(e)
-            additional_data["colorspaceTemplate"] = colorspace_config
+        template = find_colorspace_template(colorspace_config, anatomy)
+        additional_data["colorspaceTemplate"] = template or colorspace_config
 
     # create instances for every AOV we found in expected files.
     # NOTE: this is done for every AOV and every render camera (if
@@ -804,7 +864,7 @@ def get_product_name_and_group_from_template(
     # for possible solution.
     if dynamic_data is None:
         dynamic_data = {}
-    _dynamic_data = deepcopy(dynamic_data)
+    _dynamic_data = copy.deepcopy(dynamic_data)
     _dynamic_data.pop("aov", None)
 
     resulting_group_name = get_product_name(
@@ -889,6 +949,8 @@ def _create_instances_for_aov(
             collections, _ = clique.assemble(collected_files)
             collected_files = _get_real_files_to_render(
                 collections[0], aov_frames_to_render)
+            if len(collected_files) == 1:
+                collected_files = collected_files[0]
         else:
             frame_start = int(skeleton.get("frameStartHandle"))
             frame_end = int(skeleton.get("frameEndHandle"))
@@ -970,7 +1032,7 @@ def _create_instances_for_aov(
             host_name, aov_patterns, render_file_name
         )
 
-        new_instance = deepcopy(skeleton)
+        new_instance = copy.deepcopy(skeleton)
         new_instance["productName"] = product_name
         new_instance["productGroup"] = group_name
         new_instance["aov"] = aov
@@ -1234,8 +1296,7 @@ def create_skeleton_instance_cache(instance):
         "extendFrames": data.get("extendFrames"),
         "overrideExistingFrame": data.get("overrideExistingFrame"),
         "jobBatchName": data.get("jobBatchName", ""),
-        # map inputVersions `ObjectId` -> `str` so json supports it
-        "inputVersions": list(map(str, data.get("inputVersions", []))),
+        "inputVersions": serialize_input_versions(data.get("inputVersions")),
     }
 
     # skip locking version if we are creating v01
@@ -1362,7 +1423,7 @@ def create_instances_for_cache(instance, skeleton):
         except ValueError as e:
             log.warning(e)
 
-        new_instance = deepcopy(skeleton)
+        new_instance = copy.deepcopy(skeleton)
 
         log.info("Creating data for: {}".format(product_name))
         new_instance["productName"] = product_name
@@ -1409,7 +1470,6 @@ def copy_extend_frames(instance, representation):
         representation (dict): presentation to operate on
 
     """
-    import speedcopy
 
     R_FRAME_NUMBER = re.compile(
         r".+\.(?P<frame>[0-9]+)\..+")
@@ -1477,7 +1537,7 @@ def copy_extend_frames(instance, representation):
 
     # copy files
     for source in resource_files:
-        speedcopy.copy(source[0], source[1])
+        copyfile(source[0], source[1])
         log.info("  > {}".format(source[1]))
 
     log.info("Finished copying %i files" % len(resource_files))

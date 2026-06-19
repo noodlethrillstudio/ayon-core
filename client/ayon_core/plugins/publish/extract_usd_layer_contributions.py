@@ -1,8 +1,9 @@
-from operator import attrgetter
+import copy
 import dataclasses
 import os
 import platform
 from collections import defaultdict
+from operator import attrgetter
 from typing import Any, Dict, List
 
 import pyblish.api
@@ -448,11 +449,11 @@ class CollectUSDLayerContributions(pyblish.api.InstancePlugin,
         # contributing to the same layer or asset - so we first check for
         # existence
         context = source_instance.context
+        task_name = source_instance.data.get("task")
 
         # Required matching vars
         data = {
             "folderPath": source_instance.data["folderPath"],
-            "task": source_instance.data.get("task"),
             "productName": product_name,
             "variant": variant,
             "families": families
@@ -462,6 +463,25 @@ class CollectUSDLayerContributions(pyblish.api.InstancePlugin,
         if existing_instance:
             existing_instance.append(source_instance.id)
             existing_instance.data["source_instances"].append(source_instance)
+
+            # If the instance already exists, we want to ensure the task name
+            # is set if any of the source instances specify it.
+            existing_instance_task_name = existing_instance.data.get("task")
+            if task_name and existing_instance_task_name != task_name:
+                if existing_instance_task_name:
+                    # Log the difference, but do not change task name
+                    # on the existing instance
+                    self.log.debug(
+                        "Instance has different task name"
+                        f" '{existing_instance_task_name}' than source"
+                        f" instance '{task_name}' because it already "
+                        " inherited the task name from another source "
+                        " instance."
+                    )
+                else:
+                    # Set the task name
+                    existing_instance.data["task"] = task_name
+
             return existing_instance
 
         # Otherwise create the instance
@@ -479,12 +499,23 @@ class CollectUSDLayerContributions(pyblish.api.InstancePlugin,
         new_instance.data["comment"] = "Automated bootstrap USD file."
         new_instance.append(source_instance.id)
         new_instance.data["source_instances"] = [source_instance]
+        if task_name:
+            new_instance.data["task"] = task_name
 
         # The contribution target publishes should never match versioning of
         # the workfile but should just always increment from their last version
         # so that there will never be conflicts between contributions from
         # different departments and scenes.
         new_instance.data["followWorkfileVersion"] = False
+
+        # Transfer any creator and publish attributes, to ensure any optional
+        # validators that may also apply to these instances will have the
+        # state inherited from its parent
+        for key in ("creator_attributes", "publish_attributes"):
+            if key in source_instance.data:
+                new_instance.data[key] = copy.deepcopy(
+                    source_instance.data[key]
+                )
 
         return new_instance
 
@@ -499,25 +530,30 @@ class CollectUSDLayerContributions(pyblish.api.InstancePlugin,
         product_base_type = instance.data.get("productBaseType")
         if not product_base_type:
             product_base_type = instance.data["productType"]
-        profile = filter_profiles(cls.profiles, {
+        filtering_criteria = {
             "product_base_types": product_base_type,
-            "task_types": current_context_task_type
-        })
+            "task_types": current_context_task_type,
+            "task_names": create_context.get_current_task_name()
+        }
+        profile = filter_profiles(cls.profiles, filtering_criteria)
         if not profile:
-            profile = {}
+            profile = {
+                "contribution_enabled": True,
+                "contribution_layer": None,
+                "contribution_target_product": "usdAsset",
+                "contribution_apply_as_variant": False,
+                "contribution_variant_set_name": "{layer}",
+                "contribution_variant": "{variant}",
+                "contribution_variant_is_default": False,
+            }
 
         # Define defaults
-        default_enabled: bool = profile.get("contribution_enabled", True)
-        default_contribution_layer = profile.get(
-            "contribution_layer", None)
-        default_apply_as_variant: bool = profile.get(
-            "contribution_apply_as_variant", False)
-        default_target_product: str = profile.get(
-            "contribution_target_product", "usdAsset")
+        default_target_product: str = profile["contribution_target_product"]
         default_init_as: str = (
             "asset"
-            if profile.get("contribution_target_product") == "usdAsset"
-            else "shot")
+            if default_target_product == "usdAsset"
+            else "shot"
+        )
         init_as_visible = True
 
         # Attributes logic
@@ -548,7 +584,7 @@ class CollectUSDLayerContributions(pyblish.api.InstancePlugin,
                         "In both cases the USD data itself is free to have "
                         "references and sublayers of its own."
                     ),
-                    default=default_enabled),
+                    default=profile["contribution_enabled"]),
             TextDef("contribution_target_product",
                     label="Target product",
                     tooltip=(
@@ -583,7 +619,7 @@ class CollectUSDLayerContributions(pyblish.api.InstancePlugin,
                         "the list) will contribute as a stronger opinion."
                     ),
                     items=list(contribution_layers.keys()),
-                    default=default_contribution_layer,
+                    default=profile["contribution_layer"],
                     visible=visible),
             # TODO: We may want to make the visibility of this optional
             #  based on studio preference, to avoid complexity when not needed
@@ -608,15 +644,15 @@ class CollectUSDLayerContributions(pyblish.api.InstancePlugin,
                         "appended to as a sublayer to the department layer "
                         "instead."
                     ),
-                    default=default_apply_as_variant,
+                    default=profile["contribution_apply_as_variant"],
                     visible=visible),
             TextDef("contribution_variant_set_name",
                     label="Variant Set Name",
-                    default="{layer}",
+                    default=profile["contribution_variant_set_name"],
                     visible=variant_visible),
             TextDef("contribution_variant",
                     label="Variant Name",
-                    default="{variant}",
+                    default=profile["contribution_variant"],
                     visible=variant_visible),
             BoolDef("contribution_variant_is_default",
                     label="Set as default variant selection",
@@ -628,7 +664,7 @@ class CollectUSDLayerContributions(pyblish.api.InstancePlugin,
                         "The behavior is unpredictable if multiple instances "
                         "for the same variant set have this enabled."
                     ),
-                    default=False,
+                    default=profile["contribution_variant_is_default"],
                     visible=variant_visible),
             UISeparatorDef("usd_container_settings3"),
         ]
