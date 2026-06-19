@@ -15,7 +15,6 @@ import pyblish.api
 
 from ayon_core.pipeline.publish import get_publish_template_name
 
-
 class CollectResourcesPath(pyblish.api.InstancePlugin):
     """Generate directory path where the files and resources will be stored.
 
